@@ -15,14 +15,21 @@ class Action2D(Enum):
     Costs are inferred from them.
     """
 
-    WEST = (0, -1)
-    EAST = (0, 1)
-    NORTH = (-1, 0)
-    SOUTH = (1, 0)
-    NORTH_EAST = (1, 1)
-    SOUTH_EAST = (1, -1)
-    SOUTH_WEST = (-1, -1)
-    NORTH_WEST = (-1, 1)
+    # I've used a step size of 2 when performing 2.5D A* search
+    # This will surely speed up the searching, with drawback that
+    # the algorithm may not find a valid way to the goal because of
+    # overshooting
+    #
+    # to handle with this, A* search will stop when the algorithm found
+    # a location near to the goal (see `a_star_2_5d` below)
+    WEST = (0, -2)
+    EAST = (0, 2)
+    NORTH = (-2, 0)
+    SOUTH = (2, 0)
+    NORTH_EAST = (2, 2)
+    SOUTH_EAST = (2, -2)
+    SOUTH_WEST = (-2, -2)
+    NORTH_WEST = (-2, 2)
 
     @property
     def delta(self):
@@ -232,7 +239,14 @@ def a_star_2_5d(grid, h, start, goal, flight_altitude, waypoint_fn=lambda n: tup
                 visited.add(new_node_2d)
                 queue.put((new_cost, new_node))
 
-                if new_node_2d == goal_2d:
+                # beware: since the step size of actions are set to 2, the algorithm
+                # may overshoot the goal and finally report no paths is found
+                #
+                # so here instead of exact equal, I use a range for determine if
+                # the goal is reached
+                if goal_2d[0] - 1 <= new_node_2d[0] <= goal_2d[0] + 1 and \
+                        goal_2d[1] - 1 <= new_node_2d[1] <= goal_2d[1] + 1:
+                    branch[goal_2d] = current_node
                     final_plan = new_cost, reconstruct_path(goal, branch, waypoint_fn)
                     found = True
 

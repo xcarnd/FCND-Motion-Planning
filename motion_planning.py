@@ -34,6 +34,7 @@ class MotionPlanning(Drone):
         self.check_state = {}
 
         self.interactive_goal = (570, 474)
+        self.temporary_scatter = None
 
         # initial state
         self.flight_state = States.MANUAL
@@ -117,9 +118,15 @@ class MotionPlanning(Drone):
 
     def pick_goal(self, event):
         evt = event.mouseevent
-        x = evt.xdata
-        y = evt.ydata
+        x = int(evt.xdata)
+        y = int(evt.ydata)
         self.interactive_goal = (x, y)
+
+        if self.temporary_scatter is not None:
+            self.temporary_scatter.remove()
+        fig = event.artist.figure
+        self.temporary_scatter = fig.gca().scatter(x, y, marker='o', c='g')
+        fig.canvas.draw()
         print("You've pick up {} as in the grid as your goal. "
               "Close the figure to continue.".format(self.interactive_goal))
 
@@ -167,8 +174,8 @@ class MotionPlanning(Drone):
         # the goal is specified in (x, y), where x means easting and y means northing
         # the target altitude is read from the 2.5D map
         goal_east, goal_north = self.interactive_goal
-        grid_goal = (int(goal_north),
-                     int(goal_east),
+        grid_goal = (goal_north,
+                     goal_east,
                      int(max(grid[int(goal_north), int(goal_east)], TARGET_ALTITUDE)))
 
         print('Local Start and Goal: ', grid_start, grid_goal)
