@@ -5,7 +5,8 @@ from enum import Enum, auto
 
 import numpy as np
 
-from planning_utils import a_star, heuristic, create_grid
+from project_utils import create_grid_2_5d, a_star_2_5d, prune_path, heuristic, points_collinear_2d_xy, \
+    visualize_grid_and_pickup_goal
 from udacidrone import Drone
 from udacidrone.connection import MavlinkConnection
 from udacidrone.messaging import MsgID
@@ -31,6 +32,8 @@ class MotionPlanning(Drone):
         self.waypoints = []
         self.in_mission = True
         self.check_state = {}
+
+        self.interactive_goal = (570, 474)
 
         # initial state
         self.flight_state = States.MANUAL
@@ -87,7 +90,8 @@ class MotionPlanning(Drone):
         print("waypoint transition")
         self.target_position = self.waypoints.pop(0)
         print('target position', self.target_position)
-        self.cmd_position(self.target_position[0], self.target_position[1], self.target_position[2], self.target_position[3])
+        self.cmd_position(self.target_position[0], self.target_position[1], self.target_position[2],
+                          self.target_position[3])
 
     def landing_transition(self):
         self.flight_state = States.LANDING
@@ -111,6 +115,14 @@ class MotionPlanning(Drone):
         data = msgpack.dumps(self.waypoints)
         self.connection._master.write(data)
 
+    def pick_goal(self, event):
+        evt = event.mouseevent
+        x = evt.xdata
+        y = evt.ydata
+        self.interactive_goal = (x, y)
+        print("You've pick up {} as in the grid as your goal. "
+              "Close the figure to continue.".format(self.interactive_goal))
+
     def plan_path(self):
         self.flight_state = States.PLANNING
         print("Searching for a path ...")
@@ -119,38 +131,52 @@ class MotionPlanning(Drone):
 
         self.target_position[2] = TARGET_ALTITUDE
 
-        # TODO: read lat0, lon0 from colliders into floating point values
-        
-        # TODO: set home position to (lat0, lon0, 0)
+        with open('colliders.csv', 'r') as f:
+            header_line = f.readline()
+            lat_str, lon_str = header_line.split(',')
+            lat = float(lat_str.strip().split(' ')[1])
+            lon = float(lon_str.strip().split(' ')[1])
+            print("Map home location: ({}, {})".format(lat, lon))
 
-        # TODO: retrieve current global position
- 
-        # TODO: convert to current local position using global_to_local()
-        
+        home_position = (lon, lat, 0)
+        self.set_home_position(*home_position)
+
+        global_position = self.global_position
+
+        local_position = global_to_local(global_position, home_position)
+
         print('global home {0}, position {1}, local position {2}'.format(self.global_home, self.global_position,
                                                                          self.local_position))
         # Read in obstacle map
         data = np.loadtxt('colliders.csv', delimiter=',', dtype='Float64', skiprows=2)
-        
-        # Define a grid for a particular altitude and safety margin around obstacles
-        grid, north_offset, east_offset = create_grid(data, TARGET_ALTITUDE, SAFETY_DISTANCE)
-        print("North offset = {0}, east offset = {1}".format(north_offset, east_offset))
-        # Define starting point on the grid (this is just grid center)
-        grid_start = (-north_offset, -east_offset)
-        # TODO: convert start position to current position rather than map center
-        
-        # Set goal as some arbitrary position on the grid
-        grid_goal = (-north_offset + 10, -east_offset + 10)
-        # TODO: adapt to set goal as latitude / longitude position and convert
 
-        # Run A* to find a path from start to goal
-        # TODO: add diagonal motions with a cost of sqrt(2) to your A* implementation
-        # or move to a different search space such as a graph (not done here)
+        # Define a grid for a particular altitude and safety margin around obstacles
+        grid, north_offset, east_offset = create_grid_2_5d(data, TARGET_ALTITUDE)
+
+        print("North offset = {0}, east offset = {1}".format(north_offset, east_offset))
+        # starting point on the grid
+        grid_start = (int(local_position[0] - north_offset),
+                      int(local_position[1] - east_offset),
+                      int(local_position[2]))
+
+        # visualize grid
+        visualize_grid_and_pickup_goal(grid, grid_start, self.pick_goal)
+        # goal will be picked up interactively. But if the user (or, you the reviewer lol)
+        # just simply close the grid map, then I've also set a default goal I chose beforehand.
+
+        # the goal is specified in (x, y), where x means easting and y means northing
+        # the target altitude is read from the 2.5D map
+        goal_east, goal_north = self.interactive_goal
+        grid_goal = (int(goal_north),
+                     int(goal_east),
+                     int(max(grid[int(goal_north), int(goal_east)], TARGET_ALTITUDE)))
+
         print('Local Start and Goal: ', grid_start, grid_goal)
-        path, _ = a_star(grid, heuristic, grid_start, grid_goal)
-        
-        # TODO: prune path to minimize number of waypoints
-        # TODO (if you're feeling ambitious): Try a different approach altogether!
+        print("Searching path ... Please be patient")
+        t0 = time.time()
+        path = a_star_2_5d(grid, heuristic, grid_start, grid_goal, TARGET_ALTITUDE)
+        path = prune_path(path, points_collinear_2d_xy)
+        print("Search done. Take {} seconds in total".format(time.time() - t0))
 
         # Convert path to waypoints
         waypoints = [[p[0] + north_offset, p[1] + east_offset, TARGET_ALTITUDE, 0] for p in path]
