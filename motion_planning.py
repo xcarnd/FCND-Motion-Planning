@@ -15,7 +15,7 @@ from udacidrone.frame_utils import global_to_local
 from sklearn.neighbors import KDTree
 
 TARGET_ALTITUDE = 5
-SAFETY_DISTANCE = 5
+SAFETY_DISTANCE = 7
 
 
 class States(Enum):
@@ -227,7 +227,7 @@ class MotionPlanning(Drone):
         t0 = time.time()
         s, g = local_path_to_global_path([start_3d, goal_3d], local_position, 20, 20, 10)
         print("Finding local path from {} ({}) to {} ({})".format(start_3d, s, goal_3d, g))
-        local_path = a_star_3d(grid3d, heuristic, start_3d, goal_3d, TARGET_ALTITUDE)
+        local_path = a_star_3d(grid3d, start_3d, goal_3d, TARGET_ALTITUDE)
         #print("Local path found. Time cost: {}".format(time.time() - t0))
         local_path = prune_path(local_path, points_collinear_3d)
 
