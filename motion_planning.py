@@ -6,11 +6,16 @@ from enum import Enum, auto
 import numpy as np
 
 from project_utils import create_grid_2_5d, a_star_2_5d, prune_path, heuristic, points_collinear_2d_xy, \
-    visualize_grid_and_pickup_goal
+    visualize_grid_and_pickup_goal, create_local_path_planning_grid_and_endpoints, \
+    a_star_3d, points_collinear_3d, local_path_to_global_path
 from udacidrone import Drone
 from udacidrone.connection import MavlinkConnection
 from udacidrone.messaging import MsgID
 from udacidrone.frame_utils import global_to_local
+from sklearn.neighbors import KDTree
+
+TARGET_ALTITUDE = 5
+SAFETY_DISTANCE = 5
 
 
 class States(Enum):
@@ -33,8 +38,14 @@ class MotionPlanning(Drone):
         self.in_mission = True
         self.check_state = {}
 
-        self.interactive_goal = (570, 474)
+        self.interactive_goal = (504, 615)
         self.temporary_scatter = None
+        self.previous_location = None
+        self.map_grid = None
+        self.north_offset = None
+        self.east_offset = None
+        self.path = None
+        self.path_kdtree = None
 
         # initial state
         self.flight_state = States.MANUAL
@@ -49,7 +60,7 @@ class MotionPlanning(Drone):
             if -1.0 * self.local_position[2] > 0.95 * self.target_position[2]:
                 self.waypoint_transition()
         elif self.flight_state == States.WAYPOINT:
-            if np.linalg.norm(self.target_position[0:2] - self.local_position[0:2]) < 1.0:
+            if np.linalg.norm(self.target_position[0:2] - self.local_position[0:2]) < 2.0:
                 if len(self.waypoints) > 0:
                     self.waypoint_transition()
                 else:
@@ -89,10 +100,21 @@ class MotionPlanning(Drone):
     def waypoint_transition(self):
         self.flight_state = States.WAYPOINT
         print("waypoint transition")
+        print(self.waypoints)
         self.target_position = self.waypoints.pop(0)
+        # self.send_waypoint(self.waypoints[0])
         print('target position', self.target_position)
         self.cmd_position(self.target_position[0], self.target_position[1], self.target_position[2],
                           self.target_position[3])
+        if 0 < len(self.waypoints) < 3:
+            next_north, next_east, next_alt, _ = self.waypoints[-1]
+            grid_start = (int(next_north - self.north_offset),
+                          int(next_east - self.east_offset),
+                          int(max(0, next_alt)))
+
+            waypoints = self.plan_local_path(grid_start)
+            self.waypoints += waypoints
+            self.waypoints = prune_path(self.waypoints, points_collinear_3d)
 
     def landing_transition(self):
         self.flight_state = States.LANDING
@@ -110,6 +132,10 @@ class MotionPlanning(Drone):
         print("manual transition")
         self.stop()
         self.in_mission = False
+
+    def send_waypoint(self, waypoint):
+        data = msgpack.dumps([waypoint])
+        self.connection._master.write(data)
 
     def send_waypoints(self):
         print("Sending waypoints to simulator ...")
@@ -133,8 +159,6 @@ class MotionPlanning(Drone):
     def plan_path(self):
         self.flight_state = States.PLANNING
         print("Searching for a path ...")
-        TARGET_ALTITUDE = 5
-        SAFETY_DISTANCE = 5
 
         self.target_position[2] = TARGET_ALTITUDE
 
@@ -158,13 +182,16 @@ class MotionPlanning(Drone):
         data = np.loadtxt('colliders.csv', delimiter=',', dtype='Float64', skiprows=2)
 
         # Define a grid for a particular altitude and safety margin around obstacles
-        grid, north_offset, east_offset = create_grid_2_5d(data, TARGET_ALTITUDE)
+        grid, north_offset, east_offset = create_grid_2_5d(data, SAFETY_DISTANCE)
+        self.map_grid = grid
+        self.north_offset = north_offset
+        self.east_offset = east_offset
 
         print("North offset = {0}, east offset = {1}".format(north_offset, east_offset))
         # starting point on the grid
         grid_start = (int(local_position[0] - north_offset),
                       int(local_position[1] - east_offset),
-                      int(local_position[2]))
+                      int(TARGET_ALTITUDE))
 
         # visualize grid
         visualize_grid_and_pickup_goal(grid, grid_start, self.pick_goal)
@@ -184,13 +211,34 @@ class MotionPlanning(Drone):
         path = a_star_2_5d(grid, heuristic, grid_start, grid_goal, TARGET_ALTITUDE)
         path = prune_path(path, points_collinear_2d_xy)
         print("Search done. Take {} seconds in total".format(time.time() - t0))
+        print(path)
+        self.path = path
+        # build KDTree for the coarse path
+        self.path_kdtree = KDTree(tuple(p[:2] for p in path))
+        waypoints = self.plan_local_path(grid_start)
+        self.waypoints = waypoints
+
+    def plan_local_path(self, local_position):
+        grid3d, start_3d, goal_3d = create_local_path_planning_grid_and_endpoints(self.map_grid, self.path,
+                                                                                  self.path_kdtree, local_position,
+                                                                                  20, 20, 10)
+        if grid3d is None:
+            return []
+        t0 = time.time()
+        s, g = local_path_to_global_path([start_3d, goal_3d], local_position, 20, 20, 10)
+        print("Finding local path from {} ({}) to {} ({})".format(start_3d, s, goal_3d, g))
+        local_path = a_star_3d(grid3d, heuristic, start_3d, goal_3d, TARGET_ALTITUDE)
+        #print("Local path found. Time cost: {}".format(time.time() - t0))
+        local_path = prune_path(local_path, points_collinear_3d)
+
+        #print("Start & goal in local path:", local_path[0], local_path[-1])
+        final_path = local_path_to_global_path(local_path, local_position, 20, 20, 10)
+        print("Local path:", final_path)
 
         # Convert path to waypoints
-        waypoints = [[p[0] + north_offset, p[1] + east_offset, TARGET_ALTITUDE, 0] for p in path]
+        waypoints = [[p[0] + self.north_offset, p[1] + self.east_offset, p[2], 0] for p in final_path]
         # Set self.waypoints
-        self.waypoints = waypoints
-        # TODO: send waypoints to sim
-        self.send_waypoints()
+        return waypoints
 
     def start(self):
         self.start_log("Logs", "NavLog.txt")
