@@ -102,7 +102,6 @@ class MotionPlanning(Drone):
         print("waypoint transition")
         print(self.waypoints)
         self.target_position = self.waypoints.pop(0)
-        # self.send_waypoint(self.waypoints[0])
         print('target position', self.target_position)
         self.cmd_position(self.target_position[0], self.target_position[1], self.target_position[2],
                           self.target_position[3])
@@ -113,6 +112,8 @@ class MotionPlanning(Drone):
                           int(max(0, next_alt)))
 
             waypoints = self.plan_local_path(grid_start)
+            if len(waypoints) > 1:
+                self.send_waypoints2(waypoints[1:])
             self.waypoints += waypoints
             self.waypoints = prune_path(self.waypoints, points_collinear_3d)
 
@@ -135,6 +136,11 @@ class MotionPlanning(Drone):
 
     def send_waypoint(self, waypoint):
         data = msgpack.dumps([waypoint])
+        self.connection._master.write(data)
+
+    def send_waypoints2(self, waypoints):
+        print("Sending waypoints to simulator ...")
+        data = msgpack.dumps(waypoints)
         self.connection._master.write(data)
 
     def send_waypoints(self):
@@ -217,22 +223,23 @@ class MotionPlanning(Drone):
         self.path_kdtree = KDTree(tuple(p[:2] for p in path))
         waypoints = self.plan_local_path(grid_start)
         self.waypoints = waypoints
+        self.send_waypoints2(waypoints)
 
     def plan_local_path(self, local_position):
         grid3d, start_3d, goal_3d = create_local_path_planning_grid_and_endpoints(self.map_grid, self.path,
                                                                                   self.path_kdtree, local_position,
-                                                                                  20, 20, 10)
+                                                                                  20, 20, 20)
         if grid3d is None:
             return []
         t0 = time.time()
-        s, g = local_path_to_global_path([start_3d, goal_3d], local_position, 20, 20, 10)
+        s, g = local_path_to_global_path([start_3d, goal_3d], local_position, 20, 20, 20)
         print("Finding local path from {} ({}) to {} ({})".format(start_3d, s, goal_3d, g))
-        local_path = a_star_3d(grid3d, start_3d, goal_3d, TARGET_ALTITUDE)
+        local_path = a_star_3d(grid3d, heuristic, start_3d, goal_3d, TARGET_ALTITUDE)
         #print("Local path found. Time cost: {}".format(time.time() - t0))
         local_path = prune_path(local_path, points_collinear_3d)
 
         #print("Start & goal in local path:", local_path[0], local_path[-1])
-        final_path = local_path_to_global_path(local_path, local_position, 20, 20, 10)
+        final_path = local_path_to_global_path(local_path, local_position, 20, 20, 20)
         print("Local path:", final_path)
 
         # Convert path to waypoints

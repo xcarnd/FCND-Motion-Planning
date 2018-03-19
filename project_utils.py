@@ -21,14 +21,14 @@ class Action2D(Enum):
     #
     # to handle with this, A* search will stop when the algorithm found
     # a location near to the goal (see `a_star_2_5d` below)
-    WEST = (0, -1)
-    EAST = (0, 1)
-    NORTH = (-1, 0)
-    SOUTH = (1, 0)
-    NORTH_EAST = (1, 1)
-    SOUTH_EAST = (1, -1)
-    SOUTH_WEST = (-1, -1)
-    NORTH_WEST = (-1, 1)
+    WEST = (0, -3)
+    EAST = (0, 3)
+    NORTH = (-3, 0)
+    SOUTH = (3, 0)
+    NORTH_EAST = (3, 3)
+    SOUTH_EAST = (3, -3)
+    SOUTH_WEST = (-3, -3)
+    NORTH_WEST = (-3, 3)
 
     @property
     def delta(self):
@@ -138,7 +138,7 @@ def valid_actions(grid, current_node):
     """
     Returns a list of valid actions given a grid and current node.
     """
-    max_allowed_altitude_diff = 10
+    max_allowed_altitude_diff = 20
     actions = list(Action2D)
     north_max, east_max = grid.shape[0] - 1, grid.shape[1] - 1
     n, e, a = current_node
@@ -403,8 +403,8 @@ def a_star_2_5d(grid, h, start, goal, flight_altitude, waypoint_fn=lambda n: tup
                 #
                 # so here instead of exact equal, I use a range for determine if
                 # the goal is reached
-                if goal_2d[0] - 1 <= new_node_2d[0] <= goal_2d[0] + 1 and \
-                        goal_2d[1] - 1 <= new_node_2d[1] <= goal_2d[1] + 1:
+                if goal_2d[0] - 1.5 <= new_node_2d[0] <= goal_2d[0] + 1.5 and \
+                        goal_2d[1] - 1.5 <= new_node_2d[1] <= goal_2d[1] + 1.5:
                     branch[goal_2d] = current_node
                     final_plan = new_cost, reconstruct_path(goal, branch, waypoint_fn)
                     found = True
@@ -450,8 +450,8 @@ def a_star_3d(grid, h, start, goal, flight_altitude):
         print("Found a local plan. Total cost: {}".format(final_plan[0]))
         return final_plan[1]
     else:
-        print("Local path not found")
-        return None
+        print("Local path not found. Try lifting up")
+        return [(start[0], start[1], start[2] + 5)]
 
 
 def visualize_grid_and_pickup_goal(grid, start, callback):
