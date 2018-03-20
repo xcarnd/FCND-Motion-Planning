@@ -191,7 +191,7 @@ class MotionPlanning(Drone):
         # starting point on the grid
         grid_start = (int(local_position[0] - north_offset),
                       int(local_position[1] - east_offset),
-                      int(TARGET_ALTITUDE))
+                      int(max(TARGET_ALTITUDE, np.ceil(-local_position[2]) + SAFETY_DISTANCE + 1)))
 
         # visualize grid
         visualize_grid_and_pickup_goal(grid, grid_start, self.pick_goal)
@@ -239,37 +239,35 @@ class MotionPlanning(Drone):
 
         grid_start, grid_goal = local_path_to_global_path([start_3d, goal_3d], local_position, 20, 20, 20)
         print("Finding local path from {} ({}) to {} ({})".format(start_3d, grid_start, goal_3d, grid_goal))
+        print("Path feasible? ", feasible)
         pre_path = []
+        post_path = []
         if not feasible:
-            minimum_flyable = self.map_grid[grid_goal[0], grid_goal[1]]
+            print("Local planning not feasible.")
+            minimum_flyable = max(self.map_grid[grid_goal[0], grid_goal[1]], TARGET_ALTITUDE)
             print("The goal found is inside the building so the proposed plan is not feasible. "
                   "Adjust the drone's position first")
             print("Goal: {}, target location minimum flyable altitude: {}"
                   .format(goal_3d, minimum_flyable))
             start_alt, goal_alt = grid_start[2], grid_goal[2]
 
-            if goal_alt - start_alt > 10:
+            if goal_alt > start_alt:
                 new_start = (grid_start[0], grid_start[1], goal_alt)
-                pre_path = [(grid_start[0], grid_start[1], grid_start[2]), new_start]
-                print("Goal altitude - start altitude > 10. "
+                pre_path = [grid_start, new_start]
+                print("Goal altitude > start altitude "
                       "Lifting and search for local path from {} to {} instead".format(new_start, goal_3d))
                 grid3d, start_3d, goal_3d, feasible = \
                     create_local_path_planning_grid_and_endpoints(self.map_grid, self.path,
                                                                   self.path_kdtree, new_start,
                                                                   20, 20, 20)
                 local_start = new_start
-            elif start_alt - goal_alt > 10:
-                new_start = (grid_goal[0], grid_goal[1], start_alt)
-                pre_path = [(grid_start[0], grid_start[1], grid_start[2]), new_start]
-
-                print("Start altitude - goal altitude > 10. "
+            elif start_alt > goal_alt:
+                new_goal = (grid_goal[0], grid_goal[1], start_alt)
+                post_path = [new_goal, grid_goal]
+                print("Start altitude > goal altitude. "
                       "First reaching the goal then landing to the specific altitude."
-                      "Will try to search path from {} to {} first".format(new_start, goal_3d))
-                grid3d, start_3d, goal_3d, feasible = \
-                    create_local_path_planning_grid_and_endpoints(self.map_grid, self.path,
-                                                                  self.path_kdtree, new_start,
-                                                                  20, 20, 20)
-                local_start = new_start
+                      "Then try to search path from {} to {} first".format(new_goal, grid_goal))
+                goal_3d = (goal_3d[0], goal_3d[1], start_3d[2])
         t0 = time.time()
 
         # if altitude difference is too large, try to reach that altitude first
@@ -280,7 +278,7 @@ class MotionPlanning(Drone):
 
         #print("Start & goal in local path:", local_path[0], local_path[-1])
         final_path = local_path_to_global_path(local_path, local_start, 20, 20, 20)
-        final_path = pre_path + final_path
+        final_path = pre_path + final_path + post_path
         print("Local path:", final_path)
 
         return final_path

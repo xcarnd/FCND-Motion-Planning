@@ -356,7 +356,7 @@ def create_local_path_planning_grid_and_endpoints(grid, path, tree, start, north
     return (grid3d,
             (center_n - north_min, center_e - east_min, center_a - alt_min),
             (n - north_min, e - east_min, a - alt_min),
-            a < alt_max)
+            alt_min < a < alt_max)
 
 
 def local_path_to_global_path(path, start_local, north_span, east_span, altitude_span):
