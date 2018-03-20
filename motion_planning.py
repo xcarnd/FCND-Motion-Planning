@@ -7,7 +7,8 @@ import numpy as np
 
 from project_utils import create_grid_2_5d, a_star_2_5d, prune_path, heuristic, points_collinear_2d_xy, \
     visualize_grid_and_pickup_goal, create_local_path_planning_grid_and_endpoints, \
-    a_star_3d, points_collinear_3d, local_path_to_global_path, simplify_path
+    a_star_3d, points_collinear_3d, local_path_to_global_path, simplify_path, \
+    get_length_of_path, heuristic_manhattan_dist_2d
 from udacidrone import Drone
 from udacidrone.connection import MavlinkConnection
 from udacidrone.messaging import MsgID
@@ -61,9 +62,7 @@ class MotionPlanning(Drone):
             if -1.0 * self.local_position[2] > 0.95 * self.target_position[2]:
                 self.waypoint_transition()
         elif self.flight_state == States.WAYPOINT:
-            # print(self.local_position, self.target_position,
-            #     np.linalg.norm(self.target_position[0:2] - self.local_position[0:2]),
-            #       abs(self.target_position[2] - (-self.local_position[2])))
+            self.plan_next_waypoints_if_needed()
             if np.linalg.norm(self.target_position[0:2] - self.local_position[0:2]) < 3.0 \
                     and abs(self.target_position[2] - (-self.local_position[2])) < 2.0:
                 if len(self.waypoints) > 0:
@@ -110,40 +109,6 @@ class MotionPlanning(Drone):
         print('target position', self.target_position)
         self.cmd_position(self.target_position[0], self.target_position[1], self.target_position[2],
                           self.target_position[3])
-
-        if 0 < len(self.waypoints) < 5:
-            last_wp = self.waypoints[-1]
-            next_north, next_east, next_alt, _ = last_wp
-            grid_start = (int(next_north - self.north_offset),
-                          int(next_east - self.east_offset),
-                          int(max(0, next_alt)))
-            next_path = [grid_start]
-            while len(next_path) < 5 and grid_start != self.path[-1]:
-                path = self.plan_local_path(grid_start)
-                if path is None:
-                    break
-                next_path += path[1:]
-                next_path = simplify_path(self.map_grid, next_path)
-                grid_start = next_path[-1]
-
-            next_waypoints = self.path_to_waypoints(next_path)
-
-            if len(next_waypoints) > 1:
-                self.send_waypoints2(next_waypoints[1:])
-                self.waypoints += next_waypoints[1:]
-
-        # if 0 < len(self.waypoints) < 5:
-        #     next_north, next_east, next_alt, _ = self.waypoints[-1]
-        #     grid_start = (int(next_north - self.north_offset),
-        #                   int(next_east - self.east_offset),
-        #                   int(max(0, next_alt)))
-        #
-        #     waypoints = self.plan_local_path(grid_start)
-        #     if len(waypoints) > 1:
-        #         self.send_waypoints2(waypoints[1:])
-        #     self.waypoints += waypoints[1:]
-        #     print(self.waypoints)
-#            self.waypoints = prune_path(self.waypoints, points_collinear_3d)
 
     def landing_transition(self):
         self.flight_state = States.LANDING
@@ -243,17 +208,23 @@ class MotionPlanning(Drone):
         print('Start and goal in the grid', grid_start, grid_goal)
         print("Searching path ... Please be patient")
         t0 = time.time()
-        path = a_star_2_5d(grid, heuristic, grid_start, grid_goal, TARGET_ALTITUDE)
+        path = a_star_2_5d(grid, heuristic_manhattan_dist_2d, grid_start, grid_goal, TARGET_ALTITUDE)
         path = prune_path(path, points_collinear_2d_xy)
         print("Search done. Take {} seconds in total".format(time.time() - t0))
         print(path)
         self.path = path
-        # build KDTree for the coarse path
+        # build KDTree for querying
         self.path_kdtree = KDTree(tuple(p[:2] for p in path))
-        path = self.plan_local_path(grid_start)
-        waypoints = self.path_to_waypoints(path)
-        self.waypoints = waypoints
-        self.send_waypoints2(waypoints)
+
+        self.waypoints = self.path_to_waypoints([self.path[0]])
+        self.send_waypoints2(self.waypoints)
+        self.plan_next_waypoints_if_needed()
+        # # build KDTree for the coarse path
+        # self.path_kdtree = KDTree(tuple(p[:2] for p in path))
+        # path = self.plan_local_path(grid_start)
+        # waypoints = self.path_to_waypoints(path)
+        # self.waypoints = waypoints
+        # self.send_waypoints2(waypoints)
 
     def plan_local_path(self, local_position):
         grid3d, start_3d, goal_3d, feasible = \
@@ -263,7 +234,6 @@ class MotionPlanning(Drone):
 
         if grid3d is None:
             return []
-
 
         local_start = local_position
 
@@ -320,6 +290,45 @@ class MotionPlanning(Drone):
         waypoints = [[p[0] + self.north_offset, p[1] + self.east_offset, p[2], 0] for p in path]
         # Set self.waypoints
         return waypoints
+
+    def plan_next_waypoints_if_needed(self):
+        if len(self.waypoints) == 0:
+            return
+        waypoints_length = get_length_of_path(self.waypoints)
+        if 0 <= waypoints_length < 40:
+            last_wp = self.waypoints[-1]
+            next_north, next_east, next_alt, _ = last_wp
+            grid_start = (int(next_north - self.north_offset),
+                          int(next_east - self.east_offset),
+                          int(max(0, next_alt)))
+            next_path = [grid_start]
+            while get_length_of_path(next_path) < 40 and grid_start != self.path[-1]:
+                path = self.plan_local_path(grid_start)
+                if path is None:
+                    break
+                next_path += path[1:]
+                next_path = simplify_path(self.map_grid, next_path)
+                grid_start = next_path[-1]
+
+            next_waypoints = self.path_to_waypoints(next_path)
+
+            if len(next_waypoints) > 1:
+                self.send_waypoints2(next_waypoints[1:])
+                self.waypoints += next_waypoints[1:]
+
+        # if 0 < len(self.waypoints) < 5:
+        #     next_north, next_east, next_alt, _ = self.waypoints[-1]
+        #     grid_start = (int(next_north - self.north_offset),
+        #                   int(next_east - self.east_offset),
+        #                   int(max(0, next_alt)))
+        #
+        #     waypoints = self.plan_local_path(grid_start)
+        #     if len(waypoints) > 1:
+        #         self.send_waypoints2(waypoints[1:])
+        #     self.waypoints += waypoints[1:]
+        #     print(self.waypoints)
+
+    #            self.waypoints = prune_path(self.waypoints, points_collinear_3d)
 
     def start(self):
         self.start_log("Logs", "NavLog.txt")

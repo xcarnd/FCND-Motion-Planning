@@ -4,6 +4,7 @@ from queue import PriorityQueue
 import operator as op
 import matplotlib.pyplot as plt
 from shapely.geometry import Polygon, Point, LineString
+from functools import reduce
 
 
 class Action2D(Enum):
@@ -25,6 +26,7 @@ class Action2D(Enum):
     EAST = (0, 4)
     NORTH = (-4, 0)
     SOUTH = (4, 0)
+
     # NORTH_EAST = (3, 3)
     # SOUTH_EAST = (3, -3)
     # SOUTH_WEST = (-3, -3)
@@ -133,6 +135,13 @@ def heuristic(position, goal):
     Heuristic function used for A* planning. Simply return the euclidean distance of the two points given.
     """
     return np.linalg.norm(np.array(position) - np.array(goal))
+
+
+def heuristic_manhattan_dist_2d(position, goal):
+    """
+    Heuristic function used for calculating manhattan distance between given 2D points.
+    """
+    return abs(position[0] - goal[0]) + abs(position[1] - goal[1])
 
 
 def valid_actions(grid, current_node):
@@ -555,3 +564,13 @@ def simplify_path(grid, path):
     return result_path
 
 
+def get_length_of_path(path, waypoint_fn=waypoint_fn_3d):
+    """
+    Given a path, return the total length (Euclidean distance) of it
+    """
+    return reduce(op.add,
+                  map(lambda x: np.linalg.norm(np.array(waypoint_fn(x[0]))
+                                               -
+                                               np.array(waypoint_fn(x[1]))),
+                      zip(path[:-1], path[1:])),
+                  0)
