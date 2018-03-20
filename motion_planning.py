@@ -7,7 +7,7 @@ import numpy as np
 
 from project_utils import create_grid_2_5d, a_star_2_5d, prune_path, heuristic, points_collinear_2d_xy, \
     visualize_grid_and_pickup_goal, create_local_path_planning_grid_and_endpoints, \
-    a_star_3d, points_collinear_3d, local_path_to_global_path
+    a_star_3d, points_collinear_3d, local_path_to_global_path, simplify_path
 from udacidrone import Drone
 from udacidrone.connection import MavlinkConnection
 from udacidrone.messaging import MsgID
@@ -61,9 +61,9 @@ class MotionPlanning(Drone):
             if -1.0 * self.local_position[2] > 0.95 * self.target_position[2]:
                 self.waypoint_transition()
         elif self.flight_state == States.WAYPOINT:
-            print(self.local_position, self.target_position,
-                np.linalg.norm(self.target_position[0:2] - self.local_position[0:2]),
-                  abs(self.target_position[2] - (-self.local_position[2])))
+            # print(self.local_position, self.target_position,
+            #     np.linalg.norm(self.target_position[0:2] - self.local_position[0:2]),
+            #       abs(self.target_position[2] - (-self.local_position[2])))
             if np.linalg.norm(self.target_position[0:2] - self.local_position[0:2]) < 3.0 \
                     and abs(self.target_position[2] - (-self.local_position[2])) < 2.0:
                 if len(self.waypoints) > 0:
@@ -110,17 +110,40 @@ class MotionPlanning(Drone):
         print('target position', self.target_position)
         self.cmd_position(self.target_position[0], self.target_position[1], self.target_position[2],
                           self.target_position[3])
+
         if 0 < len(self.waypoints) < 5:
-            next_north, next_east, next_alt, _ = self.waypoints[-1]
+            last_wp = self.waypoints[-1]
+            next_north, next_east, next_alt, _ = last_wp
             grid_start = (int(next_north - self.north_offset),
                           int(next_east - self.east_offset),
                           int(max(0, next_alt)))
+            next_path = [grid_start]
+            while len(next_path) < 5 and grid_start != self.path[-1]:
+                path = self.plan_local_path(grid_start)
+                if path is None:
+                    break
+                next_path += path[1:]
+                next_path = simplify_path(self.map_grid, next_path)
+                grid_start = next_path[-1]
 
-            waypoints = self.plan_local_path(grid_start)
-            if len(waypoints) > 1:
-                self.send_waypoints2(waypoints[1:])
-            self.waypoints += waypoints
-            self.waypoints = prune_path(self.waypoints, points_collinear_3d)
+            next_waypoints = self.path_to_waypoints(next_path)
+
+            if len(next_waypoints) > 1:
+                self.send_waypoints2(next_waypoints[1:])
+                self.waypoints += next_waypoints[1:]
+
+        # if 0 < len(self.waypoints) < 5:
+        #     next_north, next_east, next_alt, _ = self.waypoints[-1]
+        #     grid_start = (int(next_north - self.north_offset),
+        #                   int(next_east - self.east_offset),
+        #                   int(max(0, next_alt)))
+        #
+        #     waypoints = self.plan_local_path(grid_start)
+        #     if len(waypoints) > 1:
+        #         self.send_waypoints2(waypoints[1:])
+        #     self.waypoints += waypoints[1:]
+        #     print(self.waypoints)
+#            self.waypoints = prune_path(self.waypoints, points_collinear_3d)
 
     def landing_transition(self):
         self.flight_state = States.LANDING
@@ -227,49 +250,74 @@ class MotionPlanning(Drone):
         self.path = path
         # build KDTree for the coarse path
         self.path_kdtree = KDTree(tuple(p[:2] for p in path))
-        waypoints = self.plan_local_path(grid_start)
+        path = self.plan_local_path(grid_start)
+        waypoints = self.path_to_waypoints(path)
         self.waypoints = waypoints
         self.send_waypoints2(waypoints)
 
     def plan_local_path(self, local_position):
-        grid3d, start_3d, goal_3d = create_local_path_planning_grid_and_endpoints(self.map_grid, self.path,
-                                                                                  self.path_kdtree, local_position,
-                                                                                  20, 20, 20)
+        grid3d, start_3d, goal_3d, feasible = \
+            create_local_path_planning_grid_and_endpoints(self.map_grid, self.path,
+                                                          self.path_kdtree, local_position,
+                                                          20, 20, 20)
+
         if grid3d is None:
             return []
-        t0 = time.time()
-        s, g = local_path_to_global_path([start_3d, goal_3d], local_position, 20, 20, 20)
-        print("Finding local path from {} ({}) to {} ({})".format(start_3d, s, goal_3d, g))
 
-        start_alt, goal_alt = s[2], g[2]
-        # if altitude difference is too large, try to reach that altitude first
+
+        local_start = local_position
+
+        grid_start, grid_goal = local_path_to_global_path([start_3d, goal_3d], local_position, 20, 20, 20)
+        print("Finding local path from {} ({}) to {} ({})".format(start_3d, grid_start, goal_3d, grid_goal))
         pre_path = []
-        if goal_alt - start_alt > 10:
-            pre_path = [(s[0], s[1], s[2]), (s[0], s[1], goal_alt)]
-            start_3d = (start_3d[0], start_3d[1], goal_3d[2])
-            print("Goal altitude - start altitude > 10. "
-                  "Lifting and search for local path from {} to {} instead".format(start_3d, goal_3d))
-        elif start_alt - goal_alt > 10:
-            pre_goal = goal_3d[:]
-            pre_goal[2] = start_3d[2]
-            print("Start altitude - goal altitude > 10. "
-                  "First reaching the goal then landing to the specific altitude."
-                  "Will try to search path from {} to {} first".format(start_3d, pre_goal))
-            pre_path = a_star_3d(grid3d, heuristic, start_3d, pre_goal, TARGET_ALTITUDE)
-            print("Then from {} to {} finally".format(pre_goal, goal_3d))
-            start_3d = pre_goal
+        if not feasible:
+            minimum_flyable = self.map_grid[grid_goal[0], grid_goal[1]]
+            print("The goal found is inside the building so the proposed plan is not feasible. "
+                  "Adjust the drone's position first")
+            print("Goal: {}, target location minimum flyable altitude: {}"
+                  .format(goal_3d, minimum_flyable))
+            start_alt, goal_alt = grid_start[2], grid_goal[2]
+
+            if goal_alt - start_alt > 10:
+                new_start = (grid_start[0], grid_start[1], goal_alt)
+                pre_path = [(grid_start[0], grid_start[1], grid_start[2]), new_start]
+                print("Goal altitude - start altitude > 10. "
+                      "Lifting and search for local path from {} to {} instead".format(new_start, goal_3d))
+                grid3d, start_3d, goal_3d, feasible = \
+                    create_local_path_planning_grid_and_endpoints(self.map_grid, self.path,
+                                                                  self.path_kdtree, new_start,
+                                                                  20, 20, 20)
+                local_start = new_start
+            elif start_alt - goal_alt > 10:
+                new_start = (grid_goal[0], grid_goal[1], start_alt)
+                pre_path = [(grid_start[0], grid_start[1], grid_start[2]), new_start]
+
+                print("Start altitude - goal altitude > 10. "
+                      "First reaching the goal then landing to the specific altitude."
+                      "Will try to search path from {} to {} first".format(new_start, goal_3d))
+                grid3d, start_3d, goal_3d, feasible = \
+                    create_local_path_planning_grid_and_endpoints(self.map_grid, self.path,
+                                                                  self.path_kdtree, new_start,
+                                                                  20, 20, 20)
+                local_start = new_start
+        t0 = time.time()
+
+        # if altitude difference is too large, try to reach that altitude first
 
         local_path = a_star_3d(grid3d, heuristic, start_3d, goal_3d, TARGET_ALTITUDE)
         #print("Local path found. Time cost: {}".format(time.time() - t0))
-        local_path = pre_path + local_path
         local_path = prune_path(local_path, points_collinear_3d)
 
         #print("Start & goal in local path:", local_path[0], local_path[-1])
-        final_path = local_path_to_global_path(local_path, local_position, 20, 20, 20)
+        final_path = local_path_to_global_path(local_path, local_start, 20, 20, 20)
+        final_path = pre_path + final_path
         print("Local path:", final_path)
 
+        return final_path
+
+    def path_to_waypoints(self, path):
         # Convert path to waypoints
-        waypoints = [[p[0] + self.north_offset, p[1] + self.east_offset, p[2], 0] for p in final_path]
+        waypoints = [[p[0] + self.north_offset, p[1] + self.east_offset, p[2], 0] for p in path]
         # Set self.waypoints
         return waypoints
 

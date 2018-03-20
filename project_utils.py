@@ -177,11 +177,9 @@ def valid_actions_3d(grid, current_node):
         nn, ne, na = n + dn, e + de, a + da
         if not (nn < 0 or nn > north_max or
                 ne < 0 or ne > east_max or
-                na < 0):
-            if grid[nn, ne, min(na, alt_max)] > 0 and na - a > 0:
-                valid.append((na - a, action))
-            else:
-                valid.append((0, action))
+                na < 0 or na > alt_max or
+                grid[nn, ne, min(na, alt_max)] > 0):
+            valid.append(action)
 
     return valid
 
@@ -301,10 +299,10 @@ def create_local_path_planning_grid_and_endpoints(grid, path, tree, start, north
     alt_max = center_a + altitude_span
 
     grid3d = np.zeros((north_max - north_min + 1, east_max - east_min + 1, alt_max - alt_min + 1))
-    for iter_n in np.arange(north_min, north_max):
-        for iter_e in np.arange(east_min, east_max):
-            alt = int(grid[iter_n, iter_e])
-            grid3d[iter_n - north_min, iter_e - east_min, 0:max((min(alt_max, alt) - alt_min), 0)] = 1
+    for iter_n in np.arange(north_min, north_max + 1):
+        for iter_e in np.arange(east_min, east_max + 1):
+            alt = min(int(np.ceil(grid[iter_n, iter_e])) + 1, alt_max + 1)
+            grid3d[iter_n - north_min, iter_e - east_min, 0:max(alt - alt_min, 0)] = 1
 
     local_polygon = Polygon(((east_max, north_max),
                              (east_min, north_max),
@@ -328,7 +326,7 @@ def create_local_path_planning_grid_and_endpoints(grid, path, tree, start, north
 
     p1, p2 = start_point, end_point
 
-    print("Local 3D start & goal:", p1, p2)
+    print("Finding intersection of line {}-{} with local polygon to get local planning's goal".format(p1, p2))
     p1p2 = LineString((p1[1::-1], p2[1::-1]))
     intersection = local_polygon.intersection(p1p2)
     if intersection:
@@ -338,17 +336,18 @@ def create_local_path_planning_grid_and_endpoints(grid, path, tree, start, north
         pie, pin = path[-1][1], path[-1][0]
     dist = np.linalg.norm(np.array([center_n, center_e]) - np.array([pin, pie]))
     if dist < 1.0:
-        return None, None, None
+        return None, None, None, None
     e, n = int(pie), int(pin)
     # dist_all = np.linalg.norm(np.array(horizon_waypoint[:2]) - np.array(path[previous_waypoint_idx][:2]))
     # dist = np.linalg.norm(np.array((n, e)) - np.array(path[previous_waypoint_idx][:2]))
     # a = int(np.ceil(max((path[horizon_waypoint_idx][2] - path[previous_waypoint_idx][2]) * (dist / dist_all) +
     #                     path[previous_waypoint_idx][2],
     #                     grid[n, e])))
-    a = int(np.ceil(max(p2[2], grid[n, e])))
+    a = int(np.ceil(max(p2[2], grid[n, e] + 1)))
     return (grid3d,
             (center_n - north_min, center_e - east_min, center_a - alt_min),
-            (n - north_min, e - east_min, a - alt_min))
+            (n - north_min, e - east_min, a - alt_min),
+            a < alt_max)
 
 
 def local_path_to_global_path(path, start_local, north_span, east_span, altitude_span):
@@ -396,7 +395,7 @@ def a_star_2_5d(grid, h, start, goal, flight_altitude, waypoint_fn=lambda n: tup
             # pedestrians, cars or other objects in low altitudes.
             #
             # limit the drone so that it will at least flying at the lowest flight altitude we specified.
-            lowest_alt = int(np.ceil(max(np.ceil(grid[next_node]), flight_altitude)))
+            lowest_alt = int(np.ceil(max(np.ceil(grid[next_node]) + 1, flight_altitude)))
             new_node = (next_node + (lowest_alt,))
 
             new_node_2d = waypoint_fn(new_node)
@@ -414,7 +413,8 @@ def a_star_2_5d(grid, h, start, goal, flight_altitude, waypoint_fn=lambda n: tup
                 if goal_2d[0] - 2 <= new_node_2d[0] <= goal_2d[0] + 2 and \
                         goal_2d[1] - 2 <= new_node_2d[1] <= goal_2d[1] + 2:
                     branch[goal_2d] = current_node
-                    final_plan = new_cost, reconstruct_path(goal, branch, waypoint_fn)
+                    goal_loc = (goal[0], goal[1], new_node[2])
+                    final_plan = new_cost, reconstruct_path(goal_loc, branch, waypoint_fn)
                     found = True
 
     if found:
@@ -426,7 +426,7 @@ def a_star_2_5d(grid, h, start, goal, flight_altitude, waypoint_fn=lambda n: tup
 
 
 def a_star_3d(grid, h, start, goal, flight_altitude):
-
+    print("Performing 3D A* from {} to {}".format(start, goal))
     final_plan = None
     visited = set()
     queue = PriorityQueue()
@@ -437,10 +437,10 @@ def a_star_3d(grid, h, start, goal, flight_altitude):
     found = False
     while not queue.empty() and not found:
         current_cost, current_node = queue.get()
-        for alt_cost, action in valid_actions_3d(grid, current_node):
+        for action in valid_actions_3d(grid, current_node):
             if found:
                 break
-            action_cost, new_node = action.cost + alt_cost, tuple(map(op.add, current_node, action.delta))
+            action_cost, new_node = action.cost, tuple(map(op.add, current_node, action.delta))
             # penalty for flying too low
             if new_node[2] < flight_altitude:
                 action_cost += (flight_altitude - new_node[2]) * 10
@@ -457,6 +457,7 @@ def a_star_3d(grid, h, start, goal, flight_altitude):
 
     if found:
         print("Found a local plan. Total cost: {}".format(final_plan[0]))
+        print(final_plan[1])
         return final_plan[1]
     else:
         print("Local path not found.")
@@ -465,7 +466,7 @@ def a_star_3d(grid, h, start, goal, flight_altitude):
 
 def visualize_grid_and_pickup_goal(grid, start, callback):
     """
-    Visualize 2.5D grid
+    Visualize 2.5D grid and wait for the goal being picked up
     """
     im = plt.imshow(grid, cmap='gray_r', picker=True)
     plt.axis((0, grid.shape[1], 0, grid.shape[0]))
@@ -477,3 +478,80 @@ def visualize_grid_and_pickup_goal(grid, start, callback):
     fig.canvas.mpl_connect('pick_event', callback)
     plt.gca().set_title("Pickup the goal on the map")
     plt.show()
+
+
+def bresenham(start, end):
+    n1, e1 = start[:2]
+    n2, e2 = end[:2]
+
+    if abs(e2 - e1) < 1e-5:
+        return [(n, e1) for n in range(min(n1, n2), max(n1, n2) + 1)]
+
+    slope = (n2 - n1) / (e2 - e1)
+
+    cells = []
+
+    if e1 < e2:
+        n, e = n1, e1
+        ne, ee = n2, e2
+    else:
+        n, e = n2, e2
+        ne, ee = n1, e1
+
+    f = n
+    if slope >= 0:
+        while e < ee and n < ne:
+            cells.append((n, e))
+            f_new = f + slope
+            if f_new > n + 1:
+                n += 1
+            else:
+                e += 1
+                f = f_new
+    else:
+        while e < ee and n > ne:
+            cells.append((n, e))
+            f_new = f + slope
+            if f_new < n - 1:
+                n -= 1
+            else:
+                e += 1
+                f = f_new
+
+    return cells
+
+
+def simplify_path(grid, path):
+    """
+    Check against path[0] --- path[-1], path[0] --- path[-2], ... path[0] --- path[1],
+    see whether we have a direct path among them. Returns the longest path once we have found one.
+    """
+    if len(path) <= 2:
+        return path
+    print("Simplifying path:", path)
+    start_idx = 0
+    end_idx = len(path) - 1
+    result_path = [path[0]]
+    while start_idx < end_idx:
+        start = path[start_idx]
+        end = path[end_idx]
+        min_height = min(start[2], end[2])
+        cells = bresenham(start, end)
+
+        has_obs = False
+        for n, e in cells:
+            if grid[n, e] >= min_height:
+                has_obs = True
+                break
+
+        if has_obs:
+            end_idx -= 1
+        else:
+            result_path.append(end)
+            start_idx = end_idx
+            end_idx = len(path) - 1
+
+    print("Result path:", result_path)
+    return result_path
+
+
