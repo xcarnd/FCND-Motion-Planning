@@ -39,7 +39,6 @@ class MotionPlanning(Drone):
         self.in_mission = True
         self.check_state = {}
         self.full_path = []
-        self.next_path = []
 
         #self.interactive_goal = (205, 814)
         self.interactive_goal = (705, 84)
@@ -64,12 +63,7 @@ class MotionPlanning(Drone):
             if -1.0 * self.local_position[2] > 0.95 * self.target_position[2]:
                 self.waypoint_transition()
         elif self.flight_state == States.WAYPOINT:
-            if len(self.next_path) > 1:
-                next_point = self.next_path.pop(0)
-                next_point_2 = self.next_path.pop(0)
-                wp = self.path_to_waypoints([self.local_position, next_point, next_point_2])
-                self.waypoints += (wp[1:])
-                self.send_waypoints2(wp[1:])
+            self.plan_next_waypoints_if_needed()
             if np.linalg.norm(self.target_position[0:2] - self.local_position[0:2]) < 3.0 \
                     and abs(self.target_position[2] - (-self.local_position[2])) < 2.0:
                 if len(self.waypoints) > 0:
@@ -117,7 +111,6 @@ class MotionPlanning(Drone):
         print('target position', self.target_position)
         self.cmd_position(self.target_position[0], self.target_position[1], self.target_position[2],
                           self.target_position[3])
-        self.plan_next_path()
 
     def landing_transition(self):
         print("Full path:", self.full_path)
@@ -231,7 +224,7 @@ class MotionPlanning(Drone):
 
         self.waypoints = self.path_to_waypoints([self.path[0]])
         self.send_waypoints2(self.waypoints)
-        self.plan_next_path()
+        self.plan_next_waypoints_if_needed()
         # # build KDTree for the coarse path
         # self.path_kdtree = KDTree(tuple(p[:2] for p in path))
         # path = self.plan_local_path(grid_start)
@@ -309,31 +302,30 @@ class MotionPlanning(Drone):
         # Set self.waypoints
         return waypoints
 
-    def plan_next_path(self):
-        print("----------")
-        print(self.next_path)
-        print("----------")
-        if len(self.next_path) > 0:
-            last_wp = self.next_path[-1]
-            grid_start = last_wp
-        elif len(self.waypoints) > 0:
+    def plan_next_waypoints_if_needed(self):
+        if len(self.waypoints) == 0:
+            return
+        waypoints_length = get_length_of_path(self.waypoints)
+        if 0 <= waypoints_length < 40:
             last_wp = self.waypoints[-1]
-            next_north, next_east, next_alt = last_wp[:3]
+            next_north, next_east, next_alt, _ = last_wp
             grid_start = (int(next_north - self.north_offset),
                           int(next_east - self.east_offset),
                           int(max(0, next_alt)))
-        else:
-            return
+            next_path = [grid_start]
+            while get_length_of_path(next_path) < 40 and grid_start != self.path[-1]:
+                path = self.plan_local_path(grid_start)
+                if path is None:
+                    break
+                next_path += path[1:]
+                next_path = simplify_path(self.map_grid, next_path)
+                grid_start = next_path[-1]
 
-        next_path = [grid_start]
-        while len(self.next_path) < 3 and grid_start != self.path[-1]:
-            path = self.plan_local_path(grid_start)
-            next_path += path[1:]
+            next_waypoints = self.path_to_waypoints(next_path)
 
-            self.next_path += next_path[1:]
-            self.next_path = simplify_path(self.map_grid, self.next_path)
-            grid_start = self.next_path[-1][:3]
-            print("Next path: ", self.next_path)
+            if len(next_waypoints) > 1:
+                self.send_waypoints2(next_waypoints[1:])
+                self.waypoints += next_waypoints[1:]
 
         # if 0 < len(self.waypoints) < 5:
         #     next_north, next_east, next_alt, _ = self.waypoints[-1]

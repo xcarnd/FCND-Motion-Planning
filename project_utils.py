@@ -295,7 +295,6 @@ def get_waypoint_ahead_idx(loc, path, tree):
 
 
 def create_local_path_planning_grid_and_endpoints(grid, path, tree, start, north_span, east_span, altitude_span):
-    print("Starting point: ", start)
     center_n, center_e, center_a = start
     north_size, east_size = grid.shape
 
