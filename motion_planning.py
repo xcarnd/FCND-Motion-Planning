@@ -38,6 +38,7 @@ class MotionPlanning(Drone):
         self.waypoints = []
         self.in_mission = True
         self.check_state = {}
+        self.full_path = []
 
         #self.interactive_goal = (205, 814)
         self.interactive_goal = (705, 84)
@@ -102,6 +103,7 @@ class MotionPlanning(Drone):
         self.takeoff(self.target_position[2])
 
     def waypoint_transition(self):
+        print("Full path:", self.full_path)
         self.flight_state = States.WAYPOINT
         print("waypoint transition")
         print(self.waypoints)
@@ -111,6 +113,7 @@ class MotionPlanning(Drone):
                           self.target_position[3])
 
     def landing_transition(self):
+        print("Full path:", self.full_path)
         self.flight_state = States.LANDING
         print("landing transition")
         self.land()
@@ -133,6 +136,8 @@ class MotionPlanning(Drone):
 
     def send_waypoints2(self, waypoints):
         print("Sending waypoints to simulator ...")
+        self.full_path += [(int(n - self.north_offset),
+                          int(e - self.east_offset)) for n, e, a, o in waypoints]
         data = msgpack.dumps(waypoints)
         self.connection._master.write(data)
         print("Done.")
@@ -191,7 +196,7 @@ class MotionPlanning(Drone):
         # starting point on the grid
         grid_start = (int(local_position[0] - north_offset),
                       int(local_position[1] - east_offset),
-                      int(max(TARGET_ALTITUDE, np.ceil(-local_position[2]) + SAFETY_DISTANCE + 1)))
+                      int(max(TARGET_ALTITUDE, -local_position[2] + 1)))
 
         # visualize grid
         visualize_grid_and_pickup_goal(grid, grid_start, self.pick_goal)
@@ -210,6 +215,7 @@ class MotionPlanning(Drone):
         t0 = time.time()
         path = a_star_2_5d(grid, heuristic_manhattan_dist_2d, grid_start, grid_goal, TARGET_ALTITUDE)
         path = prune_path(path, points_collinear_2d_xy)
+        path = simplify_path(grid, path)
         print("Search done. Take {} seconds in total".format(time.time() - t0))
         print(path)
         self.path = path
@@ -285,7 +291,14 @@ class MotionPlanning(Drone):
 
     def path_to_waypoints(self, path):
         # Convert path to waypoints
-        waypoints = [[p[0] + self.north_offset, p[1] + self.east_offset, p[2], 0] for p in path]
+        waypoints = []
+        for i in range(len(path)):
+            p = path[i]
+            p_next = path[i + 1] if i < len(path) - 1 else None
+            orientation = 0
+            if p_next is not None:
+                orientation = np.arctan2(p_next[1] - p[1], p_next[0] - p[0])
+            waypoints.append([p[0] + self.north_offset, p[1] + self.east_offset, p[2], orientation])
         # Set self.waypoints
         return waypoints
 

@@ -498,8 +498,6 @@ def bresenham(start, end):
 
     slope = (n2 - n1) / (e2 - e1)
 
-    cells = []
-
     if e1 < e2:
         n, e = n1, e1
         ne, ee = n2, e2
@@ -507,9 +505,11 @@ def bresenham(start, end):
         n, e = n2, e2
         ne, ee = n1, e1
 
+    cells = []
+
     f = n
     if slope >= 0:
-        while e < ee and n < ne:
+        while e <= ee and n <= ne:
             cells.append((n, e))
             f_new = f + slope
             if f_new > n + 1:
@@ -518,7 +518,7 @@ def bresenham(start, end):
                 e += 1
                 f = f_new
     else:
-        while e < ee and n > ne:
+        while e <= ee and n >= ne:
             cells.append((n, e))
             f_new = f + slope
             if f_new < n - 1:
@@ -559,6 +559,9 @@ def simplify_path(grid, path):
             result_path.append(end)
             start_idx = end_idx
             end_idx = len(path) - 1
+
+    if result_path[-1] != path[-1]:
+        result_path.append(path[-1])
 
     print("Result path:", result_path)
     return result_path
