@@ -167,7 +167,7 @@ def valid_actions(grid, current_node):
         if not (nn < 0 or nn > north_max or
                 ne < 0 or ne > east_max):
             # altitude cost. going up will always cost more
-            altitude_cost = max(grid[nn, ne] - a, 0) * 100
+            altitude_cost = max(grid[nn, ne] - a, 0) * 50
             valid.append((altitude_cost, action))
 
     return valid
