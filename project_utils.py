@@ -5,6 +5,7 @@ import operator as op
 import matplotlib.pyplot as plt
 from shapely.geometry import Polygon, Point, LineString
 from functools import reduce
+import time
 
 
 class Action2D(Enum):
@@ -27,10 +28,10 @@ class Action2D(Enum):
     NORTH = (-4, 0)
     SOUTH = (4, 0)
 
-    # NORTH_EAST = (3, 3)
-    # SOUTH_EAST = (3, -3)
-    # SOUTH_WEST = (-3, -3)
-    # NORTH_WEST = (-3, 3)
+    # NORTH_EAST = (1, 1)
+    # SOUTH_EAST = (1, -1)
+    # SOUTH_WEST = (-1, -1)
+    # NORTH_WEST = (-1, 1)
 
     @property
     def delta(self):
@@ -222,14 +223,6 @@ def waypoint_fn_3d(node):
     return tuple(node[:3])
 
 
-def point_projection_xy(point):
-    return point[0], point[1]
-
-
-def point_projection_xz(point):
-    return point[0], point[2]
-
-
 def points_collinear_2d_xy(p1, p2, p3):
     """
     Test if given 3 points are collinear if projected onto XY-plane.
@@ -244,9 +237,7 @@ def points_collinear_2d_xy(p1, p2, p3):
 
 
 def points_collinear_3d(p1, p2, p3):
-    proj_xy = tuple(map(point_projection_xy, (p1, p2, p3)))
-    proj_xz = tuple(map(point_projection_xz, (p1, p2, p3)))
-    return points_collinear_2d_xy(*proj_xy) and points_collinear_2d_xy(*proj_xz)
+    return np.allclose(np.cross(np.array(p1) - np.array(p2), np.array(p2) - np.array(p3)), (0, 0, 0))
 
 
 def prune_path(path, collinear_fn):
@@ -380,6 +371,7 @@ def a_star_2_5d(grid, h, start, goal, flight_altitude, waypoint_fn=lambda n: tup
     :param waypoint_fn: a function extracting 2D representation of nodes.
     :return: A path from start to goal in grid coordinate.
     """
+    t0 = time.time()
     start_2d = waypoint_fn(start)
     goal_2d = waypoint_fn(goal)
 
@@ -427,11 +419,31 @@ def a_star_2_5d(grid, h, start, goal, flight_altitude, waypoint_fn=lambda n: tup
                     found = True
 
     if found:
-        print("Found a plan. Total cost: {}".format(final_plan[0]))
+        print("Found a plan. Total cost: {}, time cost: {}".format(final_plan[0], time.time() - t0))
         return final_plan[1]
     else:
         print("Path not found")
         return None
+
+
+def path_2_5d_to_3d_path(path):
+    """
+    Convert plan in 2.5D to 3D
+
+    In details, loop over each waypoint in the path. If altitude of current waypoint is different with the previous
+    one, insert a transition waypoint that alter the altitude only between them
+    """
+    path_3d = [path[0]]
+    previous = path[0]
+    for i in range(1, len(path)):
+        current = path[i]
+        if previous[2] > current[2]:
+            path_3d.append((current[0], current[1], previous[2]))
+        elif previous[2] < current[2]:
+            path_3d.append((previous[0], previous[1], current[2]))
+        path_3d.append(current)
+        previous = current
+    return path_3d
 
 
 def a_star_3d(grid, h, start, goal, flight_altitude):
@@ -556,6 +568,7 @@ def simplify_path(grid, path):
         if has_obs:
             end_idx -= 1
         else:
+            print("ok", end)
             result_path.append(end)
             start_idx = end_idx
             end_idx = len(path) - 1

@@ -8,7 +8,8 @@ import numpy as np
 from project_utils import create_grid_2_5d, a_star_2_5d, prune_path, heuristic, points_collinear_2d_xy, \
     visualize_grid_and_pickup_goal, create_local_path_planning_grid_and_endpoints, \
     a_star_3d, points_collinear_3d, local_path_to_global_path, simplify_path, \
-    get_length_of_path, heuristic_manhattan_dist_2d
+    get_length_of_path, heuristic_manhattan_dist_2d, \
+    path_2_5d_to_3d_path
 from udacidrone import Drone
 from udacidrone.connection import MavlinkConnection
 from udacidrone.messaging import MsgID
@@ -194,9 +195,11 @@ class MotionPlanning(Drone):
 
         print("North offset = {0}, east offset = {1}".format(north_offset, east_offset))
         # starting point on the grid
-        grid_start = (int(local_position[0] - north_offset),
-                      int(local_position[1] - east_offset),
-                      int(max(TARGET_ALTITUDE, -local_position[2] + 1)))
+        grid_start_north = int(local_position[0] - north_offset)
+        grid_start_east = int(local_position[1] - east_offset)
+        grid_start = (grid_start_north,
+                      grid_start_east,
+                      int(max(TARGET_ALTITUDE, grid[grid_start_north, grid_start_east] + 1, -local_position[2] + 1)))
 
         # visualize grid
         visualize_grid_and_pickup_goal(grid, grid_start, self.pick_goal)
@@ -213,24 +216,28 @@ class MotionPlanning(Drone):
         print('Start and goal in the grid', grid_start, grid_goal)
         print("Searching path ... Please be patient")
         t0 = time.time()
-        path = a_star_2_5d(grid, heuristic_manhattan_dist_2d, grid_start, grid_goal, TARGET_ALTITUDE)
-        path = prune_path(path, points_collinear_2d_xy)
+        path = a_star_2_5d(grid, heuristic, grid_start, grid_goal, TARGET_ALTITUDE)
+        print(path)
+        path = path_2_5d_to_3d_path(path)
+        print(path)
+        path = prune_path(path, points_collinear_3d)
+        print(path)
         path = simplify_path(grid, path)
         print("Search done. Take {} seconds in total".format(time.time() - t0))
         print(path)
         self.path = path
         # build KDTree for querying
-        self.path_kdtree = KDTree(tuple(p[:2] for p in path))
-
-        self.waypoints = self.path_to_waypoints([self.path[0]])
-        self.send_waypoints2(self.waypoints)
-        self.plan_next_waypoints_if_needed()
+        # self.path_kdtree = KDTree(tuple(p[:2] for p in path))
+        #
+        # self.waypoints = self.path_to_waypoints([self.path[0]])
+        # self.send_waypoints2(self.waypoints)
+        # self.plan_next_waypoints_if_needed()
         # # build KDTree for the coarse path
         # self.path_kdtree = KDTree(tuple(p[:2] for p in path))
         # path = self.plan_local_path(grid_start)
-        # waypoints = self.path_to_waypoints(path)
-        # self.waypoints = waypoints
-        # self.send_waypoints2(waypoints)
+        waypoints = self.path_to_waypoints(path)
+        self.waypoints = waypoints
+        self.send_waypoints2(waypoints)
 
     def plan_local_path(self, local_position):
         grid3d, start_3d, goal_3d, feasible = \
