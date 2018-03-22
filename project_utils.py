@@ -1,11 +1,10 @@
-import numpy as np
+import operator as op
+import time
 from enum import Enum
 from queue import PriorityQueue
-import operator as op
+
 import matplotlib.pyplot as plt
-from shapely.geometry import Polygon, Point, LineString
-from functools import reduce
-import time
+import numpy as np
 
 
 class Action2D(Enum):
@@ -40,7 +39,6 @@ class Action2D(Enum):
     @property
     def cost(self):
         return np.linalg.norm(np.array(self.value))
-
 
 
 def create_grid_2_5d(data, safe_distance):
@@ -80,27 +78,6 @@ def create_grid_2_5d(data, safe_distance):
         np.maximum(obs, np.ceil(alt + d_alt + safe_distance), obs)
 
     return grid, int(north_min), int(east_min)
-    # north_min = int(np.floor(np.min(data[:, 0] - data[:, 3] - safe_distance)))
-    # north_max = int(np.ceil(np.max(data[:, 0] + data[:, 3] + safe_distance)))
-    # east_min = int(np.floor(np.min(data[:, 1] - data[:, 4] - safe_distance)))
-    # east_max = int(np.ceil(np.max(data[:, 1] + data[:, 4] + safe_distance)))
-    #
-    # north_size = north_max - north_min + 1
-    # east_size = east_max - east_min + 1
-    #
-    # grid = np.zeros((north_size, east_size))
-    #
-    # for i in range(data.shape[0]):
-    #     n, e, a, dn, de, da = data[i]
-    #     n_min = int(n - dn - safe_distance - north_min)
-    #     n_max = int(n + dn + safe_distance - north_min)
-    #     e_min = int(e - de - safe_distance - east_min)
-    #     e_max = int(e + de + safe_distance - east_min)
-    #     print(n_min, n_max, int(n - dn - north_min), int(n + dn - north_min))
-    #
-    #     grid[n_min:n_max+1, e_min:e_max+1] = a + dn + safe_distance
-    #
-    # return grid, int(north_min), int(east_min)
 
 
 def heuristic(position, goal):
@@ -189,6 +166,10 @@ def points_collinear_2d_xy(p1, p2, p3):
 
 
 def points_collinear_3d(p1, p2, p3):
+    """
+    By computing the cross product of \vec{p_1 p_2} and \vec{p_2 p_3}, if the result is zero (vector),
+    then the 3 points are collinear.
+    """
     return np.allclose(np.cross(np.array(p1) - np.array(p2), np.array(p2) - np.array(p3)), (0, 0, 0))
 
 
@@ -324,8 +305,46 @@ def visualize_grid_and_pickup_goal(grid, start, callback):
     fig = plt.gcf()
     fig.colorbar(im)
     fig.canvas.mpl_connect('pick_event', callback)
-    plt.gca().set_title("Pickup the goal on the map")
+    plt.gca().set_title("Pickup the goal on the map\n(close the figure to continue)", fontsize=16)
     plt.show()
+
+
+def simplify_path(grid, path):
+    """
+    Check against path[0] --- path[-1], path[0] --- path[-2], ... path[0] --- path[1],
+    see whether we have a direct path among them. Returns the longest path once we have found one.
+    """
+    if len(path) <= 2:
+        return path
+    print("Simplifying path:", path)
+    start_idx = 0
+    end_idx = len(path) - 1
+    result_path = [path[0]]
+    while start_idx < end_idx:
+        start = path[start_idx]
+        end = path[end_idx]
+        min_height = min(start[2], end[2])
+        cells = bresenham(start, end)
+
+        has_obs = False
+        for n, e in cells:
+            if grid[n, e] >= min_height:
+                has_obs = True
+                break
+
+        if has_obs:
+            end_idx -= 1
+            if end_idx == start_idx:
+                print("Warning. No clear path starts from {}".format(path[start_idx]))
+        else:
+            result_path.append(end)
+            start_idx = end_idx
+            end_idx = len(path) - 1
+    if result_path[-1] != path[-1]:
+        result_path.append(path[-1])
+
+    print("Result path:", result_path)
+    return result_path
 
 
 def bresenham(start, end):
@@ -367,42 +386,3 @@ def bresenham(start, end):
                 f = f_new
 
     return cells
-
-
-def simplify_path(grid, path):
-    """
-    Check against path[0] --- path[-1], path[0] --- path[-2], ... path[0] --- path[1],
-    see whether we have a direct path among them. Returns the longest path once we have found one.
-    """
-    if len(path) <= 2:
-        return path
-    print("Simplifying path:", path)
-    start_idx = 0
-    end_idx = len(path) - 1
-    result_path = [path[0]]
-    while start_idx < end_idx:
-        start = path[start_idx]
-        end = path[end_idx]
-        min_height = min(start[2], end[2])
-        cells = bresenham(start, end)
-
-        has_obs = False
-        for n, e in cells:
-            if grid[n, e] >= min_height:
-                has_obs = True
-                break
-
-        if has_obs:
-            end_idx -= 1
-            if end_idx == start_idx:
-                print("Warning. No clear path starts from {}".format(path[start_idx]))
-        else:
-            result_path.append(end)
-            start_idx = end_idx
-            end_idx = len(path) - 1
-    if result_path[-1] != path[-1]:
-        result_path.append(path[-1])
-
-    print("Result path:", result_path)
-    return result_path
-

@@ -37,7 +37,7 @@ class MotionPlanning(Drone):
         self.in_mission = True
         self.check_state = {}
 
-        self.interactive_goal = (705, 84)
+        self.interactive_goal = (-122.40017151, 37.7962347, 0)
         self.temporary_scatter = None
         self.previous_location = None
         self.map_grid = None
@@ -186,26 +186,26 @@ class MotionPlanning(Drone):
 
         print("North offset = {0}, east offset = {1}".format(north_offset, east_offset))
         # starting point on the grid
-        grid_start_north = int(local_position[0] - north_offset)
-        grid_start_east = int(local_position[1] - east_offset)
-        grid_start = (grid_start_north,
-                      grid_start_east,
-                      int(max(TARGET_ALTITUDE, grid[grid_start_north, grid_start_east] + 1, -local_position[2] + 1)))
+        grid_start = self.local_position_to_grid_coord(local_position)
+        alt_start = int(max(TARGET_ALTITUDE, grid_start[2] + 1, grid[grid_start[0], grid_start[1]] + 1))
+        grid_start = grid_start[0], grid_start[1], alt_start
 
         # visualize grid
-        visualize_grid_and_pickup_goal(grid, grid_start, self.pick_goal)
         # goal will be picked up interactively. But if the user (or, you the reviewer lol)
         # just simply close the grid map, then I've also set a default goal I chose beforehand.
+        #
+        # comment it out and change self.interactive_goal to what you need if you don't like it
+        self.temporary_scatter = visualize_grid_and_pickup_goal(grid, grid_start, self.pick_goal)
 
-        # the goal is specified in (x, y), where x means easting and y means northing
-        # the target altitude is read from the 2.5D map
         goal = self.interactive_goal
+        if len(goal) < 3:
+            goal = (goal[0], goal[1], 0)
         goal_local = global_to_local(goal, self.global_home)
         goal_grid = self.local_position_to_grid_coord(goal_local)
         goal_north, goal_east, goal_alt = goal_grid
         grid_goal = (goal_north,
                      goal_east,
-                     int(max(grid[int(goal_north), int(goal_east)], TARGET_ALTITUDE, goal_alt)))
+                     int(max(grid[goal_north, goal_east] + 1, TARGET_ALTITUDE, goal_alt + 1)))
 
         print('Start and goal in the grid', grid_start, grid_goal)
         print("Searching path ... Please be patient")
