@@ -1,20 +1,17 @@
 import argparse
 import time
-import msgpack
 from enum import Enum, auto
 
+import msgpack
 import numpy as np
-
-from project_utils import create_grid_2_5d, a_star_2_5d, prune_path, heuristic, points_collinear_2d_xy, \
-    visualize_grid_and_pickup_goal, create_local_path_planning_grid_and_endpoints, \
-    a_star_3d, points_collinear_3d, local_path_to_global_path, simplify_path, \
-    get_length_of_path, heuristic_manhattan_dist_2d, \
-    path_2_5d_to_3d_path
 from udacidrone import Drone
 from udacidrone.connection import MavlinkConnection
-from udacidrone.messaging import MsgID
 from udacidrone.frame_utils import global_to_local, local_to_global
-from sklearn.neighbors import KDTree
+from udacidrone.messaging import MsgID
+
+from project_utils import create_grid_2_5d, a_star_2_5d, prune_path, heuristic, \
+    visualize_grid_and_pickup_goal, points_collinear_3d, simplify_path, \
+    path_2_5d_to_3d_path
 
 TARGET_ALTITUDE = 5
 SAFETY_DISTANCE = 5
@@ -41,7 +38,6 @@ class MotionPlanning(Drone):
         self.check_state = {}
         self.full_path = []
 
-        #self.interactive_goal = (205, 814)
         self.interactive_goal = (705, 84)
         self.temporary_scatter = None
         self.previous_location = None
@@ -49,7 +45,6 @@ class MotionPlanning(Drone):
         self.north_offset = None
         self.east_offset = None
         self.path = None
-        self.path_kdtree = None
 
         # initial state
         self.flight_state = States.MANUAL
@@ -130,18 +125,6 @@ class MotionPlanning(Drone):
         print("manual transition")
         self.stop()
         self.in_mission = False
-
-    def send_waypoint(self, waypoint):
-        data = msgpack.dumps([waypoint])
-        self.connection._master.write(data)
-
-    def send_waypoints2(self, waypoints):
-        print("Sending waypoints to simulator ...")
-        self.full_path += [(int(n - self.north_offset),
-                          int(e - self.east_offset)) for n, e, a, o in waypoints]
-        data = msgpack.dumps(waypoints)
-        self.connection._master.write(data)
-        print("Done.")
 
     def send_waypoints(self):
         print("Sending waypoints to simulator ...")
@@ -241,75 +224,9 @@ class MotionPlanning(Drone):
         print("Search done. Take {} seconds in total".format(time.time() - t0))
         print(path)
         self.path = path
-        # build KDTree for querying
-        # self.path_kdtree = KDTree(tuple(p[:2] for p in path))
-        #
-        # self.waypoints = self.path_to_waypoints([self.path[0]])
-        # self.send_waypoints2(self.waypoints)
-        # self.plan_next_waypoints_if_needed()
-        # # build KDTree for the coarse path
-        # self.path_kdtree = KDTree(tuple(p[:2] for p in path))
-        # path = self.plan_local_path(grid_start)
         waypoints = self.path_to_waypoints(path)
         self.waypoints = waypoints
         self.send_waypoints2(waypoints)
-
-    def plan_local_path(self, local_position):
-        grid3d, start_3d, goal_3d, feasible = \
-            create_local_path_planning_grid_and_endpoints(self.map_grid, self.path,
-                                                          self.path_kdtree, local_position,
-                                                          20, 20, 20)
-
-        if grid3d is None:
-            return []
-
-        local_start = local_position
-
-        grid_start, grid_goal = local_path_to_global_path([start_3d, goal_3d], local_position, 20, 20, 20)
-        print("Finding local path from {} ({}) to {} ({})".format(start_3d, grid_start, goal_3d, grid_goal))
-        print("Path feasible? ", feasible)
-        pre_path = []
-        post_path = []
-        if not feasible:
-            print("Local planning not feasible.")
-            minimum_flyable = max(self.map_grid[grid_goal[0], grid_goal[1]], TARGET_ALTITUDE)
-            print("The goal found is inside the building so the proposed plan is not feasible. "
-                  "Adjust the drone's position first")
-            print("Goal: {}, target location minimum flyable altitude: {}"
-                  .format(goal_3d, minimum_flyable))
-            start_alt, goal_alt = grid_start[2], grid_goal[2]
-
-            if goal_alt > start_alt:
-                new_start = (grid_start[0], grid_start[1], goal_alt)
-                pre_path = [grid_start, new_start]
-                print("Goal altitude > start altitude "
-                      "Lifting and search for local path from {} to {} instead".format(new_start, goal_3d))
-                grid3d, start_3d, goal_3d, feasible = \
-                    create_local_path_planning_grid_and_endpoints(self.map_grid, self.path,
-                                                                  self.path_kdtree, new_start,
-                                                                  20, 20, 20)
-                local_start = new_start
-            elif start_alt > goal_alt:
-                new_goal = (grid_goal[0], grid_goal[1], start_alt)
-                post_path = [new_goal, grid_goal]
-                print("Start altitude > goal altitude. "
-                      "First reaching the goal then landing to the specific altitude."
-                      "Then try to search path from {} to {} first".format(new_goal, grid_goal))
-                goal_3d = (goal_3d[0], goal_3d[1], start_3d[2])
-        t0 = time.time()
-
-        # if altitude difference is too large, try to reach that altitude first
-
-        local_path = a_star_3d(grid3d, heuristic, start_3d, goal_3d, TARGET_ALTITUDE)
-        #print("Local path found. Time cost: {}".format(time.time() - t0))
-        local_path = prune_path(local_path, points_collinear_3d)
-
-        #print("Start & goal in local path:", local_path[0], local_path[-1])
-        final_path = local_path_to_global_path(local_path, local_start, 20, 20, 20)
-        final_path = pre_path + final_path + post_path
-        print("Local path:", final_path)
-
-        return final_path
 
     def path_to_waypoints(self, path):
         # Convert path to waypoints
@@ -321,47 +238,7 @@ class MotionPlanning(Drone):
             if p_next is not None:
                 orientation = np.arctan2(p_next[1] - p[1], p_next[0] - p[0])
             waypoints.append([p[0] + self.north_offset, p[1] + self.east_offset, p[2], orientation])
-        # Set self.waypoints
         return waypoints
-
-    def plan_next_waypoints_if_needed(self):
-        if len(self.waypoints) == 0:
-            return
-        waypoints_length = get_length_of_path(self.waypoints)
-        if 0 <= waypoints_length < 40:
-            last_wp = self.waypoints[-1]
-            next_north, next_east, next_alt, _ = last_wp
-            grid_start = (int(next_north - self.north_offset),
-                          int(next_east - self.east_offset),
-                          int(max(0, next_alt)))
-            next_path = [grid_start]
-            while get_length_of_path(next_path) < 40 and grid_start != self.path[-1]:
-                path = self.plan_local_path(grid_start)
-                if path is None:
-                    break
-                next_path += path[1:]
-                next_path = simplify_path(self.map_grid, next_path)
-                grid_start = next_path[-1]
-
-            next_waypoints = self.path_to_waypoints(next_path)
-
-            if len(next_waypoints) > 1:
-                self.send_waypoints2(next_waypoints[1:])
-                self.waypoints += next_waypoints[1:]
-
-        # if 0 < len(self.waypoints) < 5:
-        #     next_north, next_east, next_alt, _ = self.waypoints[-1]
-        #     grid_start = (int(next_north - self.north_offset),
-        #                   int(next_east - self.east_offset),
-        #                   int(max(0, next_alt)))
-        #
-        #     waypoints = self.plan_local_path(grid_start)
-        #     if len(waypoints) > 1:
-        #         self.send_waypoints2(waypoints[1:])
-        #     self.waypoints += waypoints[1:]
-        #     print(self.waypoints)
-
-    #            self.waypoints = prune_path(self.waypoints, points_collinear_3d)
 
     def start(self):
         self.start_log("Logs", "NavLog.txt")
