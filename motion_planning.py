@@ -59,7 +59,6 @@ class MotionPlanning(Drone):
             if -1.0 * self.local_position[2] > 0.95 * self.target_position[2]:
                 self.waypoint_transition()
         elif self.flight_state == States.WAYPOINT:
-            self.plan_next_waypoints_if_needed()
             if np.linalg.norm(self.target_position[0:2] - self.local_position[0:2]) < 3.0 \
                     and abs(self.target_position[2] - (-self.local_position[2])) < 2.0:
                 if len(self.waypoints) > 0:
@@ -226,7 +225,7 @@ class MotionPlanning(Drone):
         self.path = path
         waypoints = self.path_to_waypoints(path)
         self.waypoints = waypoints
-        self.send_waypoints2(waypoints)
+        self.send_waypoints()
 
     def path_to_waypoints(self, path):
         # Convert path to waypoints
