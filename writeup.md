@@ -54,7 +54,7 @@ With this "big" step size, I will have to tackle some problem:
 
 2. because the grid is built in 1m resolution, with a 4m step size, the planner may give out a path that is valid only if there're no obstacles with greater altitude between the endpoints. This is indeed a problem if I includes the diagonal actions, but since the planner only use 4 non-diagonal directions and the safety distance around obstacles is set to 5, I can safely ignore it.
 
-Why? Because if the safety distance is set to 5, that means for any obstacles in the map it at least spans 10 meters, which is less than the 4 meters step size I used.
+    Why? Because if the safety distance is set to 5, that means for any obstacles in the map it at least spans 10 meters, which is less than the 4 meters step size I used.
 
 3. can the planner result in no feasible plan can be found? No, because in 2.5D planner, we can "fly over" any obstacle. Unlike 2D planner, every cells in 2.5D planner are valid.
 
