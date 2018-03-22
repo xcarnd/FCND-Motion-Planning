@@ -36,7 +36,6 @@ class MotionPlanning(Drone):
         self.waypoints = []
         self.in_mission = True
         self.check_state = {}
-        self.full_path = []
 
         self.interactive_goal = (705, 84)
         self.temporary_scatter = None
@@ -98,7 +97,6 @@ class MotionPlanning(Drone):
         self.takeoff(self.target_position[2])
 
     def waypoint_transition(self):
-        print("Full path:", self.full_path)
         self.flight_state = States.WAYPOINT
         print("waypoint transition")
         print(self.waypoints)
@@ -108,7 +106,6 @@ class MotionPlanning(Drone):
                           self.target_position[3])
 
     def landing_transition(self):
-        print("Full path:", self.full_path)
         self.flight_state = States.LANDING
         print("landing transition")
         self.land()
