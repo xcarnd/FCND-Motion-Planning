@@ -567,12 +567,12 @@ def simplify_path(grid, path):
 
         if has_obs:
             end_idx -= 1
+            if end_idx == start_idx:
+                print("Warning. No clear path starts from {}".format(path[start_idx]))
         else:
-            print("ok", end)
             result_path.append(end)
             start_idx = end_idx
             end_idx = len(path) - 1
-
     if result_path[-1] != path[-1]:
         result_path.append(path[-1])
 

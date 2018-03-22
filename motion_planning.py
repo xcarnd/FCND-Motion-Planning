@@ -13,7 +13,7 @@ from project_utils import create_grid_2_5d, a_star_2_5d, prune_path, heuristic, 
 from udacidrone import Drone
 from udacidrone.connection import MavlinkConnection
 from udacidrone.messaging import MsgID
-from udacidrone.frame_utils import global_to_local
+from udacidrone.frame_utils import global_to_local, local_to_global
 from sklearn.neighbors import KDTree
 
 TARGET_ALTITUDE = 5
@@ -150,17 +150,29 @@ class MotionPlanning(Drone):
 
     def pick_goal(self, event):
         evt = event.mouseevent
-        x = int(evt.xdata)
-        y = int(evt.ydata)
-        self.interactive_goal = (y, x)
+        east = int(evt.xdata)
+        north = int(evt.ydata)
+        alt = self.map_grid[north, east]
+        self.interactive_goal = local_to_global(self.grid_coord_to_local_position((north, east, alt)), self.global_home)
 
         if self.temporary_scatter is not None:
             self.temporary_scatter.remove()
         fig = event.artist.figure
-        self.temporary_scatter = fig.gca().scatter(x, y, marker='o', c='g')
+        self.temporary_scatter = fig.gca().scatter(east, north, marker='o', c='g')
         fig.canvas.draw()
-        print("You've pick up {} as in the grid as your goal. "
+        print("You've pick up (lat, lon, alt) {} as the goal. "
               "Close the figure to continue.".format(self.interactive_goal))
+
+    def grid_coord_to_local_position(self, grid_coord):
+        lat = grid_coord[0] + self.north_offset
+        lon = grid_coord[1] + self.east_offset
+        return lat, lon, -grid_coord[2]
+
+    def local_position_to_grid_coord(self, position):
+        north = int(position[0] - self.north_offset)
+        east = int(position[1] - self.east_offset)
+        alt = int(-position[2])
+        return north, east, alt
 
     def plan_path(self):
         self.flight_state = States.PLANNING
@@ -208,20 +220,23 @@ class MotionPlanning(Drone):
 
         # the goal is specified in (x, y), where x means easting and y means northing
         # the target altitude is read from the 2.5D map
-        goal_north, goal_east = self.interactive_goal
+        goal = self.interactive_goal
+        goal_local = global_to_local(goal, self.global_home)
+        goal_grid = self.local_position_to_grid_coord(goal_local)
+        goal_north, goal_east, goal_alt = goal_grid
         grid_goal = (goal_north,
                      goal_east,
-                     int(max(grid[int(goal_north), int(goal_east)], TARGET_ALTITUDE)))
+                     int(max(grid[int(goal_north), int(goal_east)], TARGET_ALTITUDE, goal_alt)))
 
         print('Start and goal in the grid', grid_start, grid_goal)
         print("Searching path ... Please be patient")
         t0 = time.time()
         path = a_star_2_5d(grid, heuristic, grid_start, grid_goal, TARGET_ALTITUDE)
-        print(path)
+        print("Path planned by 2.5D A* planner:", path)
         path = path_2_5d_to_3d_path(path)
-        print(path)
+        print("Path in 3D:", path)
         path = prune_path(path, points_collinear_3d)
-        print(path)
+        print("Path after prunning:", path)
         path = simplify_path(grid, path)
         print("Search done. Take {} seconds in total".format(time.time() - t0))
         print(path)
