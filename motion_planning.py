@@ -232,10 +232,10 @@ class MotionPlanning(Drone):
         waypoints = []
         for i in range(len(path)):
             p = path[i]
-            p_next = path[i + 1] if i < len(path) - 1 else None
+            p_prev = path[i - 1] if i > 0 else None
             orientation = 0
-            if p_next is not None:
-                orientation = np.arctan2(p_next[1] - p[1], p_next[0] - p[0])
+            if p_prev is not None:
+                orientation = np.arctan2(p[1] - p_prev[1], p[0] - p_prev[0])
             waypoints.append([p[0] + self.north_offset, p[1] + self.east_offset, p[2], orientation])
         return waypoints
 
